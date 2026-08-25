@@ -52,7 +52,7 @@ function BoardInner() {
   const visible = useMemo(() => {
     let list = posts.filter(p => (p.boardId ?? MAIN_BOARD_ID) === board.id);
     if (cat === '공지') list = list.filter(p => p.notice);
-    else if (cat !== '전체') list = list.filter(p => p.category === cat);
+    else if (cat !== '전체' && cat !== '그림판') list = list.filter(p => p.category === cat);
     if (q) {
       const k = q.toLowerCase();
       list = list.filter(p =>
@@ -85,7 +85,7 @@ function BoardInner() {
       </div>
       <div className="toolrow">
         <div className="seg">
-          {['전체', '공지', ...board.cats.map(x => x.label)].map(c => (
+          {['전체', '공지', ...board.cats.map(x => x.label), '🎨 그림판'].map(c => (
             <button key={c} className={cat === c ? 'on' : ''} onClick={() => { setCat(c); setPage(1); }}>{c}</button>
           ))}
         </div>
@@ -97,7 +97,11 @@ function BoardInner() {
         </div>
       </div>
 
-      {board.skin === 'ticket' ? (
+      {cat === '🎨 그림판' ? (
+        <div className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
+          <DrawingBoard />
+        </div>
+      ) : board.skin === 'ticket' ? (
         /* 티켓형 스킨 (5.2 v1.9) — 왼쪽 썸네일(본문 첫 이미지) + 절취선 + 오른쪽 글 정보 */
         <div style={board.fg ? { color: board.fg } : undefined}>
           {pageList.map(p => {
@@ -152,7 +156,7 @@ function BoardInner() {
           )}
         </div>
       )}
-      <Pager page={page} total={totalPages} onChange={setPage} />
+      {cat !== '🎨 그림판' && <Pager page={page} total={totalPages} onChange={setPage} />}
     </section>
   );
 }
