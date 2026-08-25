@@ -14,6 +14,7 @@ import {
 import { SearchBar, Pager } from '@/components/ui/Kit';
 import { CropImg } from '@/components/ui/CropEditor';
 import { EditableDesc, PageTitle } from '@/components/ui/PageText';
+import DrawingBoard from '@/components/DrawingBoard';
 
 const PER_PAGE = 10;
 
