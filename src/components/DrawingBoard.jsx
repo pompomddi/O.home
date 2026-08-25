@@ -2,6 +2,8 @@ import React, { useRef, useState, useEffect } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set, push } from 'firebase/database';
 import { useAuth } from '@/lib/auth';
+import { useSearchParams } from 'next/navigation';
+import { MAIN_BOARD_ID } from '@/lib/boardStore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -16,9 +18,11 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getDatabase(app);
 
-export default function DrawingBoard({ onPostSuccess }) {
-  const canvasRef = useRef(null);
+export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataUrl?: string) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { user } = useAuth();
+  const params = useSearchParams();
+  const currentBoardId = params.get('b') ?? MAIN_BOARD_ID;
 
   const [brushType, setBrushType] = useState('pencil');
   const [strokeColor, setStrokeColor] = useState('#000000');
@@ -33,7 +37,6 @@ export default function DrawingBoard({ onPostSuccess }) {
     '#ffffff', '#c3c3c3', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7', '#ffaec9', '#ffc899', '#f5e49e', '#d3d3d3'
   ];
 
-  // 실시간 캔버스 수신
   useEffect(() => {
     if (!db) return;
     const canvasDataRef = ref(db, 'live_canvas/image_data');
@@ -42,9 +45,11 @@ export default function DrawingBoard({ onPostSuccess }) {
       const dataUrl = snapshot.val();
       if (dataUrl && canvasRef.current) {
         const ctx = canvasRef.current.getContext('2d');
+        if (!ctx) return;
         const img = new Image();
         img.src = dataUrl;
         img.onload = () => {
+          if (!canvasRef.current) return;
           ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
           ctx.drawImage(img, 0, 0);
         };
@@ -66,7 +71,7 @@ export default function DrawingBoard({ onPostSuccess }) {
     }
   };
 
-  const getPos = (e) => {
+  const getPos = (e: any) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
@@ -83,10 +88,11 @@ export default function DrawingBoard({ onPostSuccess }) {
     };
   };
 
-  const drawLine = (p1, p2) => {
+  const drawLine = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
     ctx.save();
     if (brushType === 'eraser') {
@@ -155,13 +161,13 @@ export default function DrawingBoard({ onPostSuccess }) {
     ctx.restore();
   };
 
-  const startDrawing = (e) => {
+  const startDrawing = (e: any) => {
     setIsDrawing(true);
     const pos = getPos(e);
     setPrevPos(pos);
   };
 
-  const draw = (e) => {
+  const draw = (e: any) => {
     if (!isDrawing) return;
     const currentPos = getPos(e);
     drawLine(prevPos, currentPos);
@@ -179,11 +185,10 @@ export default function DrawingBoard({ onPostSuccess }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (db) set(ref(db, 'live_canvas/image_data'), '');
   };
 
-  // 🚀 로드비 및 게시판으로 즉시 업로드 저장
   const handleSaveToBoard = async () => {
     if (!title.trim()) {
       alert('그림 제목을 입력해 주세요!');
@@ -194,44 +199,45 @@ export default function DrawingBoard({ onPostSuccess }) {
     setIsPosting(true);
 
     try {
-      // 이미지 화질 및 용량 최적화 (0.8 압축)
-      const imageBase64 = canvasRef.current.toDataURL('image/jpeg', 0.85);
+      const imageBase64 = canvasRef.current.toDataURL('image/png');
 
       const postData = {
-        boardId: 'road', // 📌 로드비 게시판용 ID
+        id: `p_${Date.now()}`,
+        boardId: currentBoardId,
         title: title.trim(),
-        author: user?.nickname || user?.name || user?.email?.split('@')[0] || '익명화가',
-        authorId: user?.id || user?.uid || 'guest',
-        body: `<p><img src="${imageBase64}" alt="${title}" style="max-width:100%; height:auto; border-radius:6px;" /></p>`,
-        category: '🎨비툴그림',
-        createdAt: new Date().toISOString(),
-        timestamp: Date.now(),
+        author: user?.nickname || user?.name || '익명화가',
+        authorId: user?.id || 'guest',
+        body: `<p><img src="${imageBase64}" alt="${title}" style="max-width:100%; height:auto;" /></p>`,
+        thumbSrc: imageBase64,
+        category: '🎨그림',
+        date: new Date().toISOString(),
+        views: 0,
+        comments: [],
       };
 
-      // 1. 파이어베이스 'posts' 및 'road_posts' 두 경로에 동시 등록 (오류 방지)
       if (db) {
-        const newPostRef = push(ref(db, 'posts'));
-        postData.id = newPostRef.key;
-        await set(newPostRef, postData);
-
-        // 로드비 전용 DB 경로에도 저장
-        const roadRef = push(ref(db, 'road_posts'));
-        await set(roadRef, { ...postData, id: roadRef.key });
+        try {
+          const newPostRef = push(ref(db, 'posts'));
+          await set(newPostRef, postData);
+        } catch (e) {
+          console.log('Firebase skip');
+        }
       }
 
-      // 2. 브라우저 localData 로컬 스토리지에 백업 저장
       const storageKey = 'ohome.board.v1';
       const existing = localStorage.getItem(storageKey);
       let localPosts = existing ? JSON.parse(existing) : [];
       localPosts.unshift(postData);
       localStorage.setItem(storageKey, JSON.stringify(localPosts));
 
-      alert('🎨 로드비 게시판에 그림이 게시되었습니다!');
+      alert('🎨 그림이 성공적으로 등록되었습니다!');
       setTitle('');
       handleClear();
 
-      if (onPostSuccess) onPostSuccess();
-    } catch (err) {
+      if (onPostSuccess) {
+        onPostSuccess(imageBase64);
+      }
+    } catch (err: any) {
       console.error('Save failed:', err);
       alert(`저장 중 오류가 발생했습니다: ${err.message || '알 수 없는 에러'}`);
     } finally {
@@ -245,7 +251,6 @@ export default function DrawingBoard({ onPostSuccess }) {
       width: '100%', maxWidth: '1040px', margin: '0 auto', backgroundColor: '#c0c0c0',
       border: '2px solid #ffffff', boxShadow: 'inset -1px -1px #000, inset 1px 1px #fff'
     }}>
-      {/* 툴바 */}
       <div style={{
         display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', justifyContent: 'space-between',
         width: '100%', backgroundColor: '#e0e0e0', padding: '10px 14px', border: '1px solid #808080'
@@ -287,7 +292,6 @@ export default function DrawingBoard({ onPostSuccess }) {
         </button>
       </div>
 
-      {/* 팔레트 */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', width: '100%', justifyContent: 'center', background: '#d0d0d0', padding: '6px', border: '1px solid #808080' }}>
         {palette.map((color, idx) => (
           <button
@@ -298,7 +302,6 @@ export default function DrawingBoard({ onPostSuccess }) {
         ))}
       </div>
 
-      {/* 1000 x 650 레트로 캔버스 */}
       <div style={{ width: '100%', aspectRatio: '1000/650', backgroundColor: '#ffffff', border: '2px solid #000', cursor: 'crosshair', position: 'relative' }}>
         <canvas
           ref={canvasRef}
@@ -315,7 +318,6 @@ export default function DrawingBoard({ onPostSuccess }) {
         />
       </div>
 
-      {/* 하단 입력 및 로드비 등록 버튼 */}
       <div style={{ display: 'flex', gap: '8px', width: '100%', marginTop: '6px' }}>
         <input
           type="text"
@@ -333,7 +335,7 @@ export default function DrawingBoard({ onPostSuccess }) {
             opacity: isPosting ? 0.7 : 1
           }}
         >
-          {isPosting ? '⏳ 로드비에 등록 중...' : '🚀 로드비에 그림 게시'}
+          {isPosting ? '⏳ 등록 중...' : '🚀 그림 게시하기'}
         </button>
       </div>
     </div>
