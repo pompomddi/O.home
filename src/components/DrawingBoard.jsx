@@ -18,8 +18,8 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getDatabase(app);
 
-export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataUrl?: string) => void }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+export default function DrawingBoard({ onPostSuccess }) {
+  const canvasRef = useRef(null);
   const { user } = useAuth();
   const params = useSearchParams();
   const currentBoardId = params.get('b') ?? MAIN_BOARD_ID;
@@ -71,7 +71,7 @@ export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataU
     }
   };
 
-  const getPos = (e: any) => {
+  const getPos = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
@@ -88,7 +88,7 @@ export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataU
     };
   };
 
-  const drawLine = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+  const drawLine = (p1, p2) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -161,13 +161,13 @@ export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataU
     ctx.restore();
   };
 
-  const startDrawing = (e: any) => {
+  const startDrawing = (e) => {
     setIsDrawing(true);
     const pos = getPos(e);
     setPrevPos(pos);
   };
 
-  const draw = (e: any) => {
+  const draw = (e) => {
     if (!isDrawing) return;
     const currentPos = getPos(e);
     drawLine(prevPos, currentPos);
@@ -237,7 +237,7 @@ export default function DrawingBoard({ onPostSuccess }: { onPostSuccess?: (dataU
       if (onPostSuccess) {
         onPostSuccess(imageBase64);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Save failed:', err);
       alert(`저장 중 오류가 발생했습니다: ${err.message || '알 수 없는 에러'}`);
     } finally {
