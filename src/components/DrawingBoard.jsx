@@ -1,9 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getDatabase, ref, onValue, set, push } from 'firebase/database';
+import { getDatabase, ref, push, set } from 'firebase/database';
 import { useAuth } from '@/lib/auth';
-import { useSearchParams } from 'next/navigation';
-import { MAIN_BOARD_ID } from '@/lib/boardStore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -18,73 +16,56 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getDatabase(app);
 
-export default function DrawingBoard({ onPostSuccess }) {
+export default function DrawingBoard({ boardId = 'load-b', onPostSuccess }) {
   const canvasRef = useRef(null);
   const { user } = useAuth();
-  const params = useSearchParams();
-  const currentBoardId = params.get('b') ?? MAIN_BOARD_ID;
 
-  const [brushType, setBrushType] = useState('pencil');
-  const [strokeColor, setStrokeColor] = useState('#000000');
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [penSize, setPenSize] = useState(2);
+  const [eraserSize, setEraserSize] = useState(10);
+  const [activeTool, setActiveTool] = useState('pen');
+  const [rgb, setRgb] = useState({ r: 0, g: 0, b: 0 });
   const [title, setTitle] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [prevPos, setPrevPos] = useState({ x: 0, y: 0 });
-
-  const palette = [
-    '#000000', '#7f7f7f', '#880015', '#ed1c24', '#ff79e0', '#ffc90e', '#fff200', '#22b14c', '#00a2e8', '#3f48cc', '#a349a4',
-    '#ffffff', '#c3c3c3', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7', '#ffaec9', '#ffc899', '#f5e49e', '#d3d3d3'
-  ];
+  const [seconds, setSeconds] = useState(0);
 
   useEffect(() => {
-    if (!db) return;
-    const canvasDataRef = ref(db, 'live_canvas/image_data');
-
-    const unsubscribe = onValue(canvasDataRef, (snapshot) => {
-      const dataUrl = snapshot.val();
-      if (dataUrl && canvasRef.current) {
-        const ctx = canvasRef.current.getContext('2d');
-        if (!ctx) return;
-        const img = new Image();
-        img.src = dataUrl;
-        img.onload = () => {
-          if (!canvasRef.current) return;
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          ctx.drawImage(img, 0, 0);
-        };
-      }
-    }, (err) => {
-      console.error('Firebase Read Error:', err);
-    });
-
-    return () => unsubscribe();
+    const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  const syncCanvasToFirebase = () => {
-    if (!canvasRef.current || !db) return;
-    try {
-      const dataUrl = canvasRef.current.toDataURL('image/png', 0.8);
-      set(ref(db, 'live_canvas/image_data'), dataUrl);
-    } catch (e) {
-      console.error('Sync Error:', e);
-    }
+  const formatTimer = (sec) => {
+    const h = String(Math.floor(sec / 3600)).padStart(2, '0');
+    const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
+    const s = String(sec % 60).padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  };
+
+  const currentColorHex = `#${((1 << 24) + (rgb.r << 16) + (rgb.g << 8) + rgb.b).toString(16).slice(1)}`;
+
+  const paletteColors = [
+    '#ffffff', '#000000', '#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff',
+    '#808080', '#800000', '#808000', '#008000', '#008080', '#000080', '#800080', '#ff8040'
+  ];
+
+  const handlePaletteClick = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    setRgb({ r, g, b });
+    setActiveTool('pen');
   };
 
   const getPos = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-
     const rect = canvas.getBoundingClientRect();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height)
     };
   };
 
@@ -95,67 +76,22 @@ export default function DrawingBoard({ onPostSuccess }) {
     if (!ctx) return;
 
     ctx.save();
-    if (brushType === 'eraser') {
+    if (activeTool === 'eraser') {
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.lineWidth = strokeWidth * 2;
+      ctx.lineWidth = eraserSize;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
-    } else if (brushType === 'pencil') {
-      ctx.fillStyle = strokeColor;
+    } else {
+      ctx.fillStyle = currentColorHex;
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
       for (let i = 0; i < dist; i += 1) {
         const x = p1.x + Math.cos(angle) * i;
         const y = p1.y + Math.sin(angle) * i;
-        ctx.fillRect(Math.floor(x), Math.floor(y), strokeWidth, strokeWidth);
-      }
-    } else if (brushType === 'airbrush') {
-      ctx.fillStyle = strokeColor;
-      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      const density = strokeWidth * 3;
-      for (let i = 0; i < dist; i += 2) {
-        const currX = p1.x + Math.cos(angle) * i;
-        const currY = p1.y + Math.sin(angle) * i;
-        for (let j = 0; j < density; j++) {
-          const offsetX = (Math.random() - 0.5) * strokeWidth * 2.5;
-          const offsetY = (Math.random() - 0.5) * strokeWidth * 2.5;
-          ctx.globalAlpha = 0.08;
-          ctx.fillRect(currX + offsetX, currY + offsetY, 1.5, 1.5);
-        }
-      }
-    } else if (brushType === 'crayon') {
-      ctx.fillStyle = strokeColor;
-      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      for (let i = 0; i < dist; i += 1) {
-        const currX = p1.x + Math.cos(angle) * i;
-        const currY = p1.y + Math.sin(angle) * i;
-        for (let j = 0; j < strokeWidth * 2; j++) {
-          if (Math.random() > 0.3) {
-            const rx = (Math.random() - 0.5) * strokeWidth;
-            const ry = (Math.random() - 0.5) * strokeWidth;
-            ctx.globalAlpha = Math.random() * 0.7;
-            ctx.fillRect(currX + rx, currY + ry, 1, 1);
-          }
-        }
-      }
-    } else if (brushType === 'calligraphy') {
-      ctx.fillStyle = strokeColor;
-      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      for (let i = 0; i < dist; i += 1) {
-        const x = p1.x + Math.cos(angle) * i;
-        const y = p1.y + Math.sin(angle) * i;
-        ctx.beginPath();
-        ctx.moveTo(x - strokeWidth, y - strokeWidth);
-        ctx.lineTo(x + strokeWidth, y + strokeWidth);
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 2;
-        ctx.stroke();
+        ctx.fillRect(Math.floor(x), Math.floor(y), penSize, penSize);
       }
     }
     ctx.restore();
@@ -163,8 +99,7 @@ export default function DrawingBoard({ onPostSuccess }) {
 
   const startDrawing = (e) => {
     setIsDrawing(true);
-    const pos = getPos(e);
-    setPrevPos(pos);
+    setPrevPos(getPos(e));
   };
 
   const draw = (e) => {
@@ -174,26 +109,17 @@ export default function DrawingBoard({ onPostSuccess }) {
     setPrevPos(currentPos);
   };
 
-  const stopDrawing = () => {
-    if (isDrawing) {
-      setIsDrawing(false);
-      syncCanvasToFirebase();
-    }
-  };
+  const stopDrawing = () => setIsDrawing(false);
 
   const handleClear = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (db) set(ref(db, 'live_canvas/image_data'), '');
   };
 
   const handleSaveToBoard = async () => {
-    if (!title.trim()) {
-      alert('그림 제목을 입력해 주세요!');
-      return;
-    }
+    const postTitle = title.trim() || '무제';
     if (!canvasRef.current) return;
 
     setIsPosting(true);
@@ -203,11 +129,11 @@ export default function DrawingBoard({ onPostSuccess }) {
 
       const postData = {
         id: `p_${Date.now()}`,
-        boardId: currentBoardId,
-        title: title.trim(),
+        boardId: boardId,
+        title: postTitle,
         author: user?.nickname || user?.name || '익명화가',
         authorId: user?.id || 'guest',
-        body: `<p><img src="${imageBase64}" alt="${title}" style="max-width:100%; height:auto;" /></p>`,
+        body: `<p><img src="${imageBase64}" alt="${postTitle}" style="max-width:100%; height:auto;" /></p>`,
         thumbSrc: imageBase64,
         category: '🎨그림',
         date: new Date().toISOString(),
@@ -230,113 +156,164 @@ export default function DrawingBoard({ onPostSuccess }) {
       localPosts.unshift(postData);
       localStorage.setItem(storageKey, JSON.stringify(localPosts));
 
-      alert('🎨 그림이 성공적으로 등록되었습니다!');
+      alert('🎨 로드비에 성공적으로 업로드되었습니다!');
       setTitle('');
       handleClear();
 
-      if (onPostSuccess) {
-        onPostSuccess(imageBase64);
-      }
+      if (onPostSuccess) onPostSuccess(postData);
     } catch (err) {
-      console.error('Save failed:', err);
-      alert(`저장 중 오류가 발생했습니다: ${err.message || '알 수 없는 에러'}`);
+      console.error(err);
+      alert('등록 중 에러가 발생했습니다.');
     } finally {
       setIsPosting(false);
     }
   };
 
+  const retroBoxStyle = {
+    backgroundColor: '#c4c8c4',
+    borderTop: '2px solid #ffffff',
+    borderLeft: '2px solid #ffffff',
+    borderRight: '2px solid #505050',
+    borderBottom: '2px solid #505050',
+    fontSize: '11px',
+    color: '#000000',
+    userSelect: 'none',
+  };
+
+  const retroBtnStyle = {
+    backgroundColor: '#b8bcb8',
+    borderTop: '1.5px solid #ffffff',
+    borderLeft: '1.5px solid #ffffff',
+    borderRight: '1.5px solid #404040',
+    borderBottom: '1.5px solid #404040',
+    cursor: 'pointer',
+    fontSize: '11px',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  };
+
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', padding: '16px',
-      width: '100%', maxWidth: '1040px', margin: '0 auto', backgroundColor: '#c0c0c0',
-      border: '2px solid #ffffff', boxShadow: 'inset -1px -1px #000, inset 1px 1px #fff'
-    }}>
-      <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', justifyContent: 'space-between',
-        width: '100%', backgroundColor: '#e0e0e0', padding: '10px 14px', border: '1px solid #808080'
-      }}>
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-          {[
-            { id: 'pencil', label: '✏️ 도트 연필' },
-            { id: 'airbrush', label: '💨 에어브러시' },
-            { id: 'crayon', label: '🖍️ 크레파스' },
-            { id: 'calligraphy', label: '🖌️ 캘리그래피' },
-            { id: 'eraser', label: '🧹 지우개' }
-          ].map((b) => (
-            <button
-              key={b.id}
-              onClick={() => setBrushType(b.id)}
-              style={{
-                padding: '6px 12px', fontSize: '13px', fontWeight: 'bold', cursor: 'pointer',
-                backgroundColor: brushType === b.id ? '#ffffff' : '#d0d0d0',
-                border: brushType === b.id ? '2px solid #000' : '1px solid #808080'
-              }}
-            >
-              {b.label}
+    <div style={{ display: 'flex', justifyContent: 'center', width: '100%', padding: '10px 0' }}>
+      <div style={{ ...retroBoxStyle, padding: '8px', width: '600px' }}>
+        
+        {/* 상단바 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <button onClick={handleSaveToBoard} disabled={isPosting} style={{ ...retroBtnStyle, padding: '4px 10px' }}>
+              {isPosting ? '올리는 중...' : '올리기'}
             </button>
-          ))}
+            <input
+              type="text"
+              placeholder="제목 입력..."
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              style={{ padding: '2px 6px', fontSize: '11px', width: '130px', border: '1px solid #808080' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+            {['✢', '◯', '▢', '〜', '＼', '•'].map((icon, idx) => (
+              <div key={idx} style={{ ...retroBtnStyle, width: '22px', height: '22px', lineHeight: '20px' }}>{icon}</div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: '10px', backgroundColor: '#a8aca8', padding: '2px 6px', border: '1px solid #808080' }}>
+            배율 1x [ |||||||||||||| ]
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold' }}>
-          <span>굵기: {strokeWidth}px</span>
-          <input type="range" min="1" max="40" value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} style={{ cursor: 'pointer', width: '90px' }} />
+        {/* 메인 작업 영역 */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {/* 캔버스 */}
+          <div style={{ border: '1px solid #000', backgroundColor: '#ffffff', width: '450px', height: '450px', cursor: 'crosshair' }}>
+            <canvas
+              ref={canvasRef}
+              width={450}
+              height={450}
+              onMouseDown={startDrawing}
+              onMouseMove={draw}
+              onMouseUp={stopDrawing}
+              onMouseLeave={stopDrawing}
+              onTouchStart={startDrawing}
+              onTouchMove={draw}
+              onTouchEnd={stopDrawing}
+              style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
+            />
+          </div>
+
+          {/* 비툴 툴바 */}
+          <div style={{ width: '120px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            
+            <div style={{ ...retroBoxStyle, padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>펜</span>
+              <div style={{ display: 'flex', gap: '2px' }}>
+                <button onClick={() => { setPenSize(Math.min(20, penSize + 1)); setActiveTool('pen'); }} style={{ ...retroBtnStyle, width: '14px' }}>▲</button>
+                <button onClick={() => { setPenSize(Math.max(1, penSize - 1)); setActiveTool('pen'); }} style={{ ...retroBtnStyle, width: '14px' }}>▼</button>
+              </div>
+              <span>{penSize}px</span>
+            </div>
+
+            <div style={{ ...retroBoxStyle, padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>지우개</span>
+              <div style={{ display: 'flex', gap: '2px' }}>
+                <button onClick={() => { setEraserSize(Math.min(40, eraserSize + 2)); setActiveTool('eraser'); }} style={{ ...retroBtnStyle, width: '14px' }}>▲</button>
+                <button onClick={() => { setEraserSize(Math.max(2, eraserSize - 2)); setActiveTool('eraser'); }} style={{ ...retroBtnStyle, width: '14px' }}>▼</button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '2px' }}>
+              <button style={{ ...retroBtnStyle, flex: 1, padding: '2px' }}>채우기</button>
+              <button style={{ ...retroBtnStyle, flex: 1, padding: '2px' }}>색추출</button>
+            </div>
+
+            <div style={{ ...retroBoxStyle, padding: '4px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2px', marginBottom: '6px' }}>
+                {paletteColors.map((hex, i) => (
+                  <div
+                    key={i}
+                    onClick={() => handlePaletteClick(hex)}
+                    style={{ width: '18px', height: '14px', backgroundColor: hex, border: '1px solid #000', cursor: 'pointer' }}
+                  />
+                ))}
+              </div>
+
+              <div style={{ width: '100%', height: '16px', backgroundColor: currentColorHex, border: '1px solid #000', marginBottom: '6px' }} />
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                  <span style={{ color: 'red', fontWeight: 'bold' }}>R</span>
+                  <input type="range" min="0" max="255" value={rgb.r} onChange={(e) => setRgb({ ...rgb, r: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                  <span style={{ color: 'green', fontWeight: 'bold' }}>G</span>
+                  <input type="range" min="0" max="255" value={rgb.g} onChange={(e) => setRgb({ ...rgb, g: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                  <span style={{ color: 'blue', fontWeight: 'bold' }}>B</span>
+                  <input type="range" min="0" max="255" value={rgb.b} onChange={(e) => setRgb({ ...rgb, b: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '2px' }}>
+              <button style={{ ...retroBtnStyle, flex: 1, padding: '2px' }}>UNDO</button>
+              <button style={{ ...retroBtnStyle, flex: 1, padding: '2px' }}>REDO</button>
+            </div>
+
+            <div style={{ ...retroBoxStyle, padding: '4px', textAlign: 'center' }}>
+              <div>마스크 일반모드</div>
+              <div style={{ marginTop: '2px', fontWeight: 'bold' }}>{formatTimer(seconds)}</div>
+            </div>
+
+          </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '13px', fontWeight: 'bold' }}>색상:</span>
-          <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)} style={{ width: '32px', height: '32px', border: '1px solid #000', cursor: 'pointer', padding: 0 }} />
+        {/* 하단 클리어 버튼 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+          <button onClick={handleClear} style={{ ...retroBtnStyle, padding: '4px 12px' }}>클리어</button>
+          <div style={{ ...retroBoxStyle, padding: '2px 6px', fontSize: '10px' }}>Default Skin</div>
         </div>
 
-        <button onClick={handleClear} style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer', backgroundColor: '#fff', border: '1px solid #808080' }}>
-          💥 전체지우기
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', width: '100%', justifyContent: 'center', background: '#d0d0d0', padding: '6px', border: '1px solid #808080' }}>
-        {palette.map((color, idx) => (
-          <button
-            key={idx}
-            onClick={() => { setStrokeColor(color); if (brushType === 'eraser') setBrushType('pencil'); }}
-            style={{ width: '24px', height: '24px', backgroundColor: color, border: strokeColor === color && brushType !== 'eraser' ? '2px solid #000' : '1px solid #808080', cursor: 'pointer' }}
-          />
-        ))}
-      </div>
-
-      <div style={{ width: '100%', aspectRatio: '1000/650', backgroundColor: '#ffffff', border: '2px solid #000', cursor: 'crosshair', position: 'relative' }}>
-        <canvas
-          ref={canvasRef}
-          width={1000}
-          height={650}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
-          style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
-        />
-      </div>
-
-      <div style={{ display: 'flex', gap: '8px', width: '100%', marginTop: '6px' }}>
-        <input
-          type="text"
-          placeholder="그림 제목을 입력하세요..."
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={{ flex: 1, padding: '10px 14px', border: '2px solid #808080', fontSize: '14px', outline: 'none' }}
-        />
-        <button
-          onClick={handleSaveToBoard}
-          disabled={isPosting}
-          style={{
-            padding: '10px 24px', backgroundColor: '#008080', color: '#fff', fontWeight: 'bold',
-            border: '2px solid #004040', cursor: isPosting ? 'not-allowed' : 'pointer', fontSize: '14px',
-            opacity: isPosting ? 0.7 : 1
-          }}
-        >
-          {isPosting ? '⏳ 등록 중...' : '🚀 그림 게시하기'}
-        </button>
       </div>
     </div>
   );
