@@ -1,7 +1,21 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { db } from '@/lib/firebase';
-import { ref, onValue, set } from 'firebase/database';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getDatabase, ref, onValue, set } from 'firebase/database';
 import { useAuth } from '@/lib/auth';
+
+// O.home 파이어베이스 설정 안전 연결
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+};
+
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getDatabase(app);
 
 export default function DrawingBoard() {
   const canvasRef = useRef(null);
@@ -270,8 +284,8 @@ export default function DrawingBoard() {
         ))}
       </div>
 
-      {/* 레트로 캔버스 (가로 1200 x 세로 720) */}
-      <div style={{ width: '100%', height: '720px', backgroundColor: '#ffffff', border: '2px solid #000', cursor: 'crosshair' }}>
+      {/* 레트로 캔버스 (가로 800 x 세로 520) */}
+      <div style={{ width: '100%', height: '520px', backgroundColor: '#ffffff', border: '2px solid #000', cursor: 'crosshair' }}>
         <canvas
           ref={canvasRef}
           width={800}
