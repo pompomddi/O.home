@@ -68,8 +68,9 @@ function BoardInner() {
   const pageList = visible.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const canRead = (p: Post) => !p.secret || isAdmin || p.authorId === user?.id;
 
+  // TypeScript 에러 발생 지점 수정 완료 (함수형 업데이트 -> 단순 변수 결합)
   const handlePostSuccess = (newPost: Post) => {
-    setPosts((prev) => [newPost, ...prev]);
+    setPosts([newPost, ...posts]);
     setPage(1);
   };
 
@@ -88,7 +89,6 @@ function BoardInner() {
         <EditableDesc k={board.id === MAIN_BOARD_ID ? 'board-desc' : `board-desc-${board.id}`} def={board.desc} />
       </div>
 
-      {/* 로드비 게시판(load-b)일 때 상단에 BTool 레트로 그림판 즉시 배치 */}
       {board.id === 'load-b' && (
         <div className="panel" style={{ padding: '16px', marginBottom: '20px' }}>
           <DrawingBoard boardId="load-b" onPostSuccess={handlePostSuccess} />
