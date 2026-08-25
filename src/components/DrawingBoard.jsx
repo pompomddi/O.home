@@ -16,7 +16,7 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getDatabase(app);
 
-export default function DrawingBoard() {
+export default function DrawingBoard({ onPostSuccess }) {
   const canvasRef = useRef(null);
   const { user } = useAuth();
 
@@ -33,6 +33,7 @@ export default function DrawingBoard() {
     '#ffffff', '#c3c3c3', '#b5e61d', '#99d9ea', '#7092be', '#c8bfe7', '#ffaec9', '#ffc899', '#f5e49e', '#d3d3d3'
   ];
 
+  // 실시간 캔버스 수신
   useEffect(() => {
     if (!db) return;
     const canvasDataRef = ref(db, 'live_canvas/image_data');
@@ -48,6 +49,8 @@ export default function DrawingBoard() {
           ctx.drawImage(img, 0, 0);
         };
       }
+    }, (err) => {
+      console.error('Firebase Read Error:', err);
     });
 
     return () => unsubscribe();
@@ -55,8 +58,12 @@ export default function DrawingBoard() {
 
   const syncCanvasToFirebase = () => {
     if (!canvasRef.current || !db) return;
-    const dataUrl = canvasRef.current.toDataURL();
-    set(ref(db, 'live_canvas/image_data'), dataUrl);
+    try {
+      const dataUrl = canvasRef.current.toDataURL('image/png', 0.8);
+      set(ref(db, 'live_canvas/image_data'), dataUrl);
+    } catch (e) {
+      console.error('Sync Error:', e);
+    }
   };
 
   const getPos = (e) => {
@@ -176,6 +183,7 @@ export default function DrawingBoard() {
     if (db) set(ref(db, 'live_canvas/image_data'), '');
   };
 
+  // 🚀 로드비 및 게시판으로 즉시 업로드 저장
   const handleSaveToBoard = async () => {
     if (!title.trim()) {
       alert('그림 제목을 입력해 주세요!');
@@ -183,33 +191,49 @@ export default function DrawingBoard() {
     }
     if (!canvasRef.current) return;
 
-    try {
-      setIsPosting(true);
-      const imageBase64 = canvasRef.current.toDataURL('image/png');
+    setIsPosting(true);
 
-      const postsRef = ref(db, 'posts');
-      const newPostRef = push(postsRef);
+    try {
+      // 이미지 화질 및 용량 최적화 (0.8 압축)
+      const imageBase64 = canvasRef.current.toDataURL('image/jpeg', 0.85);
 
       const postData = {
-        id: newPostRef.key,
-        boardId: 'main',
-        title: title,
-        author: user?.nickname || user?.name || '익명화가',
-        authorId: user?.id || 'guest',
-        body: `<p><img src="${imageBase64}" alt="${title}" style="max-width:100%; border-radius:8px;" /></p>`,
-        category: '🎨그림판',
+        boardId: 'road', // 📌 로드비 게시판용 ID
+        title: title.trim(),
+        author: user?.nickname || user?.name || user?.email?.split('@')[0] || '익명화가',
+        authorId: user?.id || user?.uid || 'guest',
+        body: `<p><img src="${imageBase64}" alt="${title}" style="max-width:100%; height:auto; border-radius:6px;" /></p>`,
+        category: '🎨비툴그림',
         createdAt: new Date().toISOString(),
-        comments: {}
+        timestamp: Date.now(),
       };
 
-      await set(newPostRef, postData);
+      // 1. 파이어베이스 'posts' 및 'road_posts' 두 경로에 동시 등록 (오류 방지)
+      if (db) {
+        const newPostRef = push(ref(db, 'posts'));
+        postData.id = newPostRef.key;
+        await set(newPostRef, postData);
 
-      alert('🎨 게시판에 성공적으로 게시되었습니다!');
+        // 로드비 전용 DB 경로에도 저장
+        const roadRef = push(ref(db, 'road_posts'));
+        await set(roadRef, { ...postData, id: roadRef.key });
+      }
+
+      // 2. 브라우저 localData 로컬 스토리지에 백업 저장
+      const storageKey = 'ohome.board.v1';
+      const existing = localStorage.getItem(storageKey);
+      let localPosts = existing ? JSON.parse(existing) : [];
+      localPosts.unshift(postData);
+      localStorage.setItem(storageKey, JSON.stringify(localPosts));
+
+      alert('🎨 로드비 게시판에 그림이 게시되었습니다!');
       setTitle('');
       handleClear();
+
+      if (onPostSuccess) onPostSuccess();
     } catch (err) {
-      console.error(err);
-      alert('저장 중 오류가 발생했습니다.');
+      console.error('Save failed:', err);
+      alert(`저장 중 오류가 발생했습니다: ${err.message || '알 수 없는 에러'}`);
     } finally {
       setIsPosting(false);
     }
@@ -221,6 +245,7 @@ export default function DrawingBoard() {
       width: '100%', maxWidth: '1040px', margin: '0 auto', backgroundColor: '#c0c0c0',
       border: '2px solid #ffffff', boxShadow: 'inset -1px -1px #000, inset 1px 1px #fff'
     }}>
+      {/* 툴바 */}
       <div style={{
         display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', justifyContent: 'space-between',
         width: '100%', backgroundColor: '#e0e0e0', padding: '10px 14px', border: '1px solid #808080'
@@ -262,6 +287,7 @@ export default function DrawingBoard() {
         </button>
       </div>
 
+      {/* 팔레트 */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', width: '100%', justifyContent: 'center', background: '#d0d0d0', padding: '6px', border: '1px solid #808080' }}>
         {palette.map((color, idx) => (
           <button
@@ -272,7 +298,7 @@ export default function DrawingBoard() {
         ))}
       </div>
 
-      {/* 🎯 1000x650 대형 레트로 캔버스 */}
+      {/* 1000 x 650 레트로 캔버스 */}
       <div style={{ width: '100%', aspectRatio: '1000/650', backgroundColor: '#ffffff', border: '2px solid #000', cursor: 'crosshair', position: 'relative' }}>
         <canvas
           ref={canvasRef}
@@ -289,6 +315,7 @@ export default function DrawingBoard() {
         />
       </div>
 
+      {/* 하단 입력 및 로드비 등록 버튼 */}
       <div style={{ display: 'flex', gap: '8px', width: '100%', marginTop: '6px' }}>
         <input
           type="text"
@@ -302,10 +329,11 @@ export default function DrawingBoard() {
           disabled={isPosting}
           style={{
             padding: '10px 24px', backgroundColor: '#008080', color: '#fff', fontWeight: 'bold',
-            border: '2px solid #004040', cursor: 'pointer', fontSize: '14px'
+            border: '2px solid #004040', cursor: isPosting ? 'not-allowed' : 'pointer', fontSize: '14px',
+            opacity: isPosting ? 0.7 : 1
           }}
         >
-          {isPosting ? '등록 중...' : '🚀 게시판에 그림 등록'}
+          {isPosting ? '⏳ 로드비에 등록 중...' : '🚀 로드비에 그림 게시'}
         </button>
       </div>
     </div>
