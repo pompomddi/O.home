@@ -1,24 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getDatabase, ref, push, set } from 'firebase/database';
-import { useAuth } from '@/lib/auth';
-
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-};
-
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getDatabase(app);
 
 export default function DrawingBoard({ boardId = 'load-b', onPostSuccess }) {
   const canvasRef = useRef(null);
-  const { user } = useAuth();
 
   const [penSize, setPenSize] = useState(2);
   const [eraserSize, setEraserSize] = useState(10);
@@ -131,8 +114,8 @@ export default function DrawingBoard({ boardId = 'load-b', onPostSuccess }) {
         id: `p_${Date.now()}`,
         boardId: boardId,
         title: postTitle,
-        author: user?.nickname || user?.name || '익명화가',
-        authorId: user?.id || 'guest',
+        author: '익명화가',
+        authorId: 'guest',
         body: `<p><img src="${imageBase64}" alt="${postTitle}" style="max-width:100%; height:auto;" /></p>`,
         thumbSrc: imageBase64,
         category: '🎨그림',
@@ -141,22 +124,13 @@ export default function DrawingBoard({ boardId = 'load-b', onPostSuccess }) {
         comments: [],
       };
 
-      if (db) {
-        try {
-          const newPostRef = push(ref(db, 'posts'));
-          await set(newPostRef, postData);
-        } catch (e) {
-          console.log('Firebase skip');
-        }
-      }
-
       const storageKey = 'ohome.board.v1';
       const existing = localStorage.getItem(storageKey);
       let localPosts = existing ? JSON.parse(existing) : [];
       localPosts.unshift(postData);
       localStorage.setItem(storageKey, JSON.stringify(localPosts));
 
-      alert('🎨 로드비에 성공적으로 업로드되었습니다!');
+      alert('🎨 로드비에 게시글이 정상 업로드되었습니다!');
       setTitle('');
       handleClear();
 
