@@ -1,6 +1,5 @@
 'use client';
-// 일반 게시판 목록 (4.2 / 5.2 다중 게시판) — 말머리 필터 · 검색 · 비밀글 마스킹 · 접기 표시 · 페이지네이션
-// ?b=<게시판 id> 로 게시판 구분 (없으면 기본 게시판) · 리스트 스킨: 기본형 / 티켓형 (5.2 v1.9)
+
 import React, { Suspense, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
@@ -18,7 +17,6 @@ import DrawingBoard from '@/components/DrawingBoard';
 
 const PER_PAGE = 10;
 
-/** 본문에서 첫 이미지 추출 — 티켓 스킨 썸네일용 (HTML img / MD 이미지) */
 function firstImage(body: string): string | null {
   const html = /<img[^>]*src=["']([^"']+)["']/i.exec(body);
   if (html) return html[1];
@@ -34,19 +32,16 @@ function BoardInner() {
   const { boards, loaded: boardsLoaded } = useBoards();
   const board = boards.find(b => b.id === bid) ?? boards[0];
   const [posts] = useLocalList<Post>('ohome.board.v1', BOARD_SEED);
-  // 댓글 수 — 댓글은 글과 따로 저장된다 (v2.0). 옛 글 안에 남아 있던 것도 함께 센다
   const [cmtRows] = useLocalList<CommentRow>(COMMENT_KEY, COMMENT_SEED);
   const cmtCount = (p: Post) => commentsFor(cmtRows, 'post', p.id, p.comments).length;
-  const { st: boardSet } = useBoardSettings();   // 시스템 뱃지 색 (환경설정 > 게시판 관리)
+  const { st: boardSet } = useBoardSettings();
   const [cat, setCat] = useState('전체');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
 
-  // 게시판 전환 시 필터·페이지 초기화
   const [prevBid, setPrevBid] = useState(bid);
   if (prevBid !== bid) { setPrevBid(bid); setCat('전체'); setQ(''); setPage(1); }
 
-  // 권한 3단계 — mock 단계에선 로그인 전제 (로드뷰 4.10과 동일 규칙)
   const allow = (p: BoardPerm) => (p === 'admin' ? isAdmin : p === 'member' ? !!user : true);
 
   const visible = useMemo(() => {
@@ -60,7 +55,6 @@ function BoardInner() {
         p.author.toLowerCase().includes(k) ||
         (!p.secret && p.body.toLowerCase().includes(k)));
     }
-    // 공지 상단 고정 + 최신순
     return list.sort((a, b) =>
       (b.notice ? 1 : 0) - (a.notice ? 1 : 0) || b.date.localeCompare(a.date));
   }, [posts, board.id, cat, q]);
@@ -99,13 +93,11 @@ function BoardInner() {
 
       {cat === '🎨 그림판' ? (
         <div className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
-         <DrawingBoard onPostSuccess="{()"> {}} />
+          <DrawingBoard onPostSuccess={() => {}} />
         </div>
       ) : board.skin === 'ticket' ? (
-        /* 티켓형 스킨 (5.2 v1.9) — 왼쪽 썸네일(본문 첫 이미지) + 절취선 + 오른쪽 글 정보 */
         <div style={board.fg ? { color: board.fg } : undefined}>
           {pageList.map(p => {
-            // 대표 이미지(직접 선택 + 크롭) 우선, 없으면 본문 첫 이미지 (v1.9)
             const thumb = canRead(p) ? (p.thumbSrc ?? firstImage(p.body)) : null;
             return (
               <div className="bticket" key={p.id} onClick={() => { if (canRead(p)) router.push(`/board/${p.id}`); }}>
@@ -133,7 +125,6 @@ function BoardInner() {
           )}
         </div>
       ) : (
-        /* 기본형 스킨 — 리스트 행 (글씨색은 게시판 관리에서 지정 가능, v1.9) */
         <div className="panel board-list flush" style={board.fg ? { color: board.fg } : undefined}>
           {pageList.map(p => (
             <div className="brow" key={p.id} onClick={() => { if (canRead(p)) router.push(`/board/${p.id}`); }}>
@@ -162,6 +153,5 @@ function BoardInner() {
 }
 
 export default function BoardPage() {
-  // useSearchParams는 Suspense 경계 필요 (Next App Router)
   return <Suspense fallback={<section className="page" />}><BoardInner /></Suspense>;
 }
