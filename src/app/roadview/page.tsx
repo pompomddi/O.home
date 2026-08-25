@@ -1,5 +1,5 @@
 'use client';
-// 그림게시판 로드뷰 (4.12) — 업로드 옆 그림판 토글 버튼 및 프로 웹 그림판 포함 버전
+// 그림게시판 로드뷰 (4.14) — Ctrl+Z 및 Ctrl+Y(다시 실행) 추가 버전
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
@@ -22,12 +22,12 @@ const PAGE_SIZE = 4;
 const FOLD_LABEL = { spoiler: '스포일러', adult: '수위 주의' };
 
 // ==========================================
-// 🎨 웹 프로 그림판 컴포넌트
+// 🎨 웹 프로 그림판 컴포넌트 (Ctrl+Z & Ctrl+Y 추가)
 // ==========================================
 function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: string, title: string) => void; onClose: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  const [activeTool, setActiveTool] = useState<'pen' | 'crayon' | 'airbrush' | 'eraser' | 'select'>('pen');
+  const [activeTool, setActiveTool] = useState<'pen' | 'crayon' | 'airbrush' | 'eraser'>('pen');
   const [brushSize, setBrushSize] = useState(3);
   const [rgb, setRgb] = useState({ r: 0, g: 0, b: 0 });
   const [title, setTitle] = useState('');
@@ -42,6 +42,10 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
   
   const layer1CanvasRef = useRef<HTMLCanvasElement | null>(null);
   const layer2CanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Ctrl+Z (실행 취소) 및 Ctrl+Y (다시 실행) 스택
+  const [history, setHistory] = useState<{ layer: 1 | 2; dataUrl: string }[]>([]);
+  const [redoStack, setRedoStack] = useState<{ layer: 1 | 2; dataUrl: string }[]>([]);
 
   useEffect(() => {
     const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -59,9 +63,89 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
       ctx1.fillRect(0, 0, 420, 420);
     }
 
+    const ctx2 = layer2CanvasRef.current.getContext('2d');
+    if (ctx2) {
+      ctx2.clearRect(0, 0, 420, 420);
+    }
+
     redrawMainCanvas();
     return () => clearInterval(timer);
   }, []);
+
+  // 키보드 단축키 (Ctrl + Z / Ctrl + Y) 감지
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [history, redoStack]);
+
+  const saveHistoryState = (layerNum: 1 | 2) => {
+    const targetRef = layerNum === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRef.current) return;
+    const dataUrl = targetRef.current.toDataURL();
+    setHistory((prev) => [...prev.slice(-20), { layer: layerNum, dataUrl }]);
+    setRedoStack([]); // 새로운 행동을 하면 다시 실행 스택은 초기화
+  };
+
+  const handleUndo = () => {
+    if (history.length === 0) return;
+    const targetRefActive = activeLayer === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRefActive.current) return;
+
+    // 현재 상태를 Redo 스택에 저장
+    const currentDataUrl = targetRefActive.current.toDataURL();
+    setRedoStack((prev) => [...prev, { layer: activeLayer, dataUrl: currentDataUrl }]);
+
+    const lastState = history[history.length - 1];
+    setHistory((prev) => prev.slice(0, -1));
+
+    const targetRef = lastState.layer === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRef.current) return;
+    const ctx = targetRef.current.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    img.src = lastState.dataUrl;
+    img.onload = () => {
+      ctx.clearRect(0, 0, 420, 420);
+      ctx.drawImage(img, 0, 0);
+      redrawMainCanvas();
+    };
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const targetRefActive = activeLayer === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRefActive.current) return;
+
+    // 현재 상태를 History 스택에 저장
+    const currentDataUrl = targetRefActive.current.toDataURL();
+    setHistory((prev) => [...prev, { layer: activeLayer, dataUrl: currentDataUrl }]);
+
+    const nextState = redoStack[redoStack.length - 1];
+    setRedoStack((prev) => prev.slice(0, -1));
+
+    const targetRef = nextState.layer === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRef.current) return;
+    const ctx = targetRef.current.getContext('2d');
+    if (!ctx) return;
+
+    const img = new Image();
+    img.src = nextState.dataUrl;
+    img.onload = () => {
+      ctx.clearRect(0, 0, 420, 420);
+      ctx.drawImage(img, 0, 0);
+      redrawMainCanvas();
+    };
+  };
 
   const formatTimer = (sec: number) => {
     const h = String(Math.floor(sec / 3600)).padStart(2, '0');
@@ -177,7 +261,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
   };
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (activeTool === 'select') return;
+    saveHistoryState(activeLayer);
     setIsDrawing(true);
     const pos = getPos(e);
     setPrevPos(pos);
@@ -185,7 +269,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || activeTool === 'select') return;
+    if (!isDrawing) return;
     const currentPos = getPos(e);
     drawOnLayer(prevPos, currentPos);
     setPrevPos(currentPos);
@@ -194,6 +278,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
   const stopDrawing = () => setIsDrawing(false);
 
   const handleClearLayer = () => {
+    saveHistoryState(activeLayer);
     const ctx = getTargetLayerCtx();
     if (!ctx) return;
     ctx.clearRect(0, 0, 420, 420);
@@ -205,6 +290,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
   };
 
   const handleFillCanvas = () => {
+    saveHistoryState(activeLayer);
     const ctx = getTargetLayerCtx();
     if (!ctx) return;
     ctx.save();
@@ -222,7 +308,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
       onDrawUpload(imageBase64, title.trim());
       setTitle('');
       handleClearLayer();
-      onClose(); // 업로드 후 그림판 자동 닫기
+      onClose();
     } finally {
       setIsPosting(false);
     }
@@ -268,11 +354,13 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
               style={{ padding: '3px 6px', fontSize: '11px', width: '150px', border: '1px solid #808080', background: '#fff', color: '#000' }}
             />
           </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <div style={{ fontSize: '10px', backgroundColor: '#a8aca8', padding: '2px 6px', border: '1px solid #808080' }}>
-              웹 프로 비툴룸 v2.0
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <button onClick={handleUndo} style={retroBtnStyle(false)} title="Ctrl+Z">↩ 취소</button>
+            <button onClick={handleRedo} style={retroBtnStyle(false)} title="Ctrl+Y">↪ 재실행</button>
+            <div style={{ fontSize: '10px', backgroundColor: '#a8aca8', padding: '2px 5px', border: '1px solid #808080' }}>
+              v2.2
             </div>
-            <button onClick={onClose} style={{ ...retroBtnStyle(false), color: '#a00', fontWeight: 'bold' }}>✕ 닫기</button>
+            <button onClick={onClose} style={{ ...retroBtnStyle(false), color: '#a00', fontWeight: 'bold' }}>✕</button>
           </div>
         </div>
 
@@ -284,7 +372,6 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
               <button onClick={() => setActiveTool('crayon')} style={retroBtnStyle(activeTool === 'crayon')}>크레용</button>
               <button onClick={() => setActiveTool('airbrush')} style={retroBtnStyle(activeTool === 'airbrush')}>에어브러시</button>
               <button onClick={() => setActiveTool('eraser')} style={retroBtnStyle(activeTool === 'eraser')}>지우개</button>
-              <button onClick={() => setActiveTool('select')} style={retroBtnStyle(activeTool === 'select')}>선택툴</button>
             </div>
 
             <div style={{ ...retroBoxStyle, padding: '4px', textAlign: 'center' }}>
@@ -296,7 +383,7 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
             </div>
           </div>
 
-          <div style={{ border: '2px inset #fff', backgroundColor: '#ffffff', width: '420px', height: '420px', maxWidth: '100%', cursor: activeTool === 'select' ? 'default' : 'crosshair', flex: 1, position: 'relative' }}>
+          <div style={{ border: '2px inset #fff', backgroundColor: '#ffffff', width: '420px', height: '420px', maxWidth: '100%', cursor: 'crosshair', flex: 1, position: 'relative' }}>
             <canvas
               ref={canvasRef}
               width={420}
@@ -310,11 +397,6 @@ function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: s
               onTouchEnd={stopDrawing}
               style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
             />
-            {activeTool === 'select' && (
-              <div style={{ position: 'absolute', top: 5, left: 5, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '2px 6px', fontSize: '9px', pointerEvents: 'none' }}>
-                [선택 모드 활성화됨]
-              </div>
-            )}
           </div>
 
           <div style={{ width: '115px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
