@@ -31,9 +31,11 @@ function BoardInner() {
   const bid = params.get('b') ?? MAIN_BOARD_ID;
   const { boards, loaded: boardsLoaded } = useBoards();
   const board = boards.find(b => b.id === bid) ?? boards[0];
+
   const [posts, setPosts] = useLocalList<Post>('ohome.board.v1', BOARD_SEED);
   const [cmtRows] = useLocalList<CommentRow>(COMMENT_KEY, COMMENT_SEED);
-  const cmtCount = (p: Post) => commentsFor(cmtRows, 'post', p.id, p.comments).length;
+
+  const cmtCount = (p: Post) => commentsFor(cmtRows || [], 'post', p.id, p.comments).length;
   const { st: boardSet } = useBoardSettings();
   const [cat, setCat] = useState('전체');
   const [q, setQ] = useState('');
@@ -49,8 +51,10 @@ function BoardInner() {
 
   const allow = (p: BoardPerm) => (p === 'admin' ? isAdmin : p === 'member' ? !!user : true);
 
+  const currentPosts = Array.isArray(posts) ? posts : [];
+
   const visible = useMemo(() => {
-    let list = posts.filter(p => (p.boardId ?? MAIN_BOARD_ID) === board.id);
+    let list = currentPosts.filter(p => (p.boardId ?? MAIN_BOARD_ID) === board.id);
     if (cat === '공지') list = list.filter(p => p.notice);
     else if (cat !== '전체') list = list.filter(p => p.category === cat);
     if (q) {
@@ -62,16 +66,16 @@ function BoardInner() {
     }
     return list.sort((a, b) =>
       (b.notice ? 1 : 0) - (a.notice ? 1 : 0) || b.date.localeCompare(a.date));
-  }, [posts, board.id, cat, q]);
+  }, [currentPosts, board.id, cat, q]);
 
   const totalPages = Math.max(1, Math.ceil(visible.length / PER_PAGE));
   const pageList = visible.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const canRead = (p: Post) => !p.secret || isAdmin || p.authorId === user?.id;
 
-  // TypeScript 에러 발생 지점 수정 완료 (함수형 업데이트 -> 단순 변수 결합)
-  const handlePostSuccess = (newPost: Post) => {
-    setPosts([newPost, ...posts]);
-    setPage(1);
+  const handlePostSuccess = () => {
+    if (typeof window !== 'undefined') {
+      window.location.reload();
+    }
   };
 
   if (!boardsLoaded) return <section className="page" />;
@@ -89,6 +93,7 @@ function BoardInner() {
         <EditableDesc k={board.id === MAIN_BOARD_ID ? 'board-desc' : `board-desc-${board.id}`} def={board.desc} />
       </div>
 
+      {/* load-b 게시판 접속 시 고정 표시 */}
       {board.id === 'load-b' && (
         <div className="panel" style={{ padding: '16px', marginBottom: '20px' }}>
           <DrawingBoard boardId="load-b" onPostSuccess={handlePostSuccess} />
