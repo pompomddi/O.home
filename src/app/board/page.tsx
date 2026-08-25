@@ -99,7 +99,7 @@ function BoardInner() {
 
       {cat === '🎨 그림판' ? (
         <div className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
-          <DrawingBoard />
+         <DrawingBoard onPostSuccess="{()"> {}} />
         </div>
       ) : board.skin === 'ticket' ? (
         /* 티켓형 스킨 (5.2 v1.9) — 왼쪽 썸네일(본문 첫 이미지) + 절취선 + 오른쪽 글 정보 */
