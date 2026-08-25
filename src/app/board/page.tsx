@@ -31,23 +31,30 @@ function BoardInner() {
   const bid = params.get('b') ?? MAIN_BOARD_ID;
   const { boards, loaded: boardsLoaded } = useBoards();
   const board = boards.find(b => b.id === bid) ?? boards[0];
-  const [posts] = useLocalList<Post>('ohome.board.v1', BOARD_SEED);
+  const [posts, setPosts] = useLocalList<Post>('ohome.board.v1', BOARD_SEED);
   const [cmtRows] = useLocalList<CommentRow>(COMMENT_KEY, COMMENT_SEED);
   const cmtCount = (p: Post) => commentsFor(cmtRows, 'post', p.id, p.comments).length;
   const { st: boardSet } = useBoardSettings();
   const [cat, setCat] = useState('전체');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
+  const [showCanvas, setShowCanvas] = useState(false);
 
   const [prevBid, setPrevBid] = useState(bid);
-  if (prevBid !== bid) { setPrevBid(bid); setCat('전체'); setQ(''); setPage(1); }
+  if (prevBid !== bid) { 
+    setPrevBid(bid); 
+    setCat('전체'); 
+    setQ(''); 
+    setPage(1); 
+    setShowCanvas(false); 
+  }
 
   const allow = (p: BoardPerm) => (p === 'admin' ? isAdmin : p === 'member' ? !!user : true);
 
   const visible = useMemo(() => {
     let list = posts.filter(p => (p.boardId ?? MAIN_BOARD_ID) === board.id);
     if (cat === '공지') list = list.filter(p => p.notice);
-    else if (cat !== '전체' && cat !== '그림판') list = list.filter(p => p.category === cat);
+    else if (cat !== '전체') list = list.filter(p => p.category === cat);
     if (q) {
       const k = q.toLowerCase();
       list = list.filter(p =>
@@ -63,6 +70,21 @@ function BoardInner() {
   const pageList = visible.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const canRead = (p: Post) => !p.secret || isAdmin || p.authorId === user?.id;
 
+  const handlePostSuccess = () => {
+    const storageKey = 'ohome.board.v1';
+    const existing = localStorage.getItem(storageKey);
+    if (existing) {
+      try {
+        const parsed = JSON.parse(existing);
+        setPosts(parsed);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setPage(1);
+    setShowCanvas(false);
+  };
+
   if (!boardsLoaded) return <section className="page" />;
 
   const postBadge = (p: Post) => (
@@ -77,25 +99,35 @@ function BoardInner() {
         <PageTitle href={boardHref(board.id)}>{board.id === MAIN_BOARD_ID ? 'BOARD' : board.name}</PageTitle>
         <EditableDesc k={board.id === MAIN_BOARD_ID ? 'board-desc' : `board-desc-${board.id}`} def={board.desc} />
       </div>
+
       <div className="toolrow">
         <div className="seg">
-          {['전체', '공지', ...board.cats.map(x => x.label), '🎨 그림판'].map(c => (
+          {['전체', '공지', ...board.cats.map(x => x.label)].map(c => (
             <button key={c} className={cat === c ? 'on' : ''} onClick={() => { setCat(c); setPage(1); }}>{c}</button>
           ))}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <SearchBar onSearch={v => { setQ(v); setPage(1); }} />
+          <button
+            className="btn"
+            style={{ backgroundColor: showCanvas ? '#800000' : '#008080', color: '#fff', fontWeight: 'bold' }}
+            onClick={() => setShowCanvas(!showCanvas)}
+          >
+            {showCanvas ? '❌ 그림판 닫기' : '🎨 그림 그리기'}
+          </button>
           {allow(board.permWrite) && !!user && (
             <button className="btn btn-dark" onClick={() => router.push(`/board/write?b=${board.id}`)}>✎ WRITE</button>
           )}
         </div>
       </div>
 
-      {cat === '🎨 그림판' ? (
-        <div className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'center' }}>
-          <DrawingBoard onPostSuccess={() => {}} />
+      {showCanvas && (
+        <div className="panel" style={{ padding: '20px', marginBottom: '20px', display: 'flex', justifyContent: 'center' }}>
+          <DrawingBoard onPostSuccess={handlePostSuccess} />
         </div>
-      ) : board.skin === 'ticket' ? (
+      )}
+
+      {board.skin === 'ticket' ? (
         <div style={board.fg ? { color: board.fg } : undefined}>
           {pageList.map(p => {
             const thumb = canRead(p) ? (p.thumbSrc ?? firstImage(p.body)) : null;
@@ -147,7 +179,8 @@ function BoardInner() {
           )}
         </div>
       )}
-      {cat !== '🎨 그림판' && <Pager page={page} total={totalPages} onChange={setPage} />}
+
+      <Pager page={page} total={totalPages} onChange={setPage} />
     </section>
   );
 }
