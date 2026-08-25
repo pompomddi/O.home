@@ -38,7 +38,6 @@ function BoardInner() {
   const [cat, setCat] = useState('전체');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
-  const [showCanvas, setShowCanvas] = useState(false);
 
   const [prevBid, setPrevBid] = useState(bid);
   if (prevBid !== bid) { 
@@ -46,7 +45,6 @@ function BoardInner() {
     setCat('전체'); 
     setQ(''); 
     setPage(1); 
-    setShowCanvas(false); 
   }
 
   const allow = (p: BoardPerm) => (p === 'admin' ? isAdmin : p === 'member' ? !!user : true);
@@ -70,19 +68,9 @@ function BoardInner() {
   const pageList = visible.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const canRead = (p: Post) => !p.secret || isAdmin || p.authorId === user?.id;
 
-  const handlePostSuccess = () => {
-    const storageKey = 'ohome.board.v1';
-    const existing = localStorage.getItem(storageKey);
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing);
-        setPosts(parsed);
-      } catch (e) {
-        console.error(e);
-      }
-    }
+  const handlePostSuccess = (newPost: Post) => {
+    setPosts((prev) => [newPost, ...prev]);
     setPage(1);
-    setShowCanvas(false);
   };
 
   if (!boardsLoaded) return <section className="page" />;
@@ -100,6 +88,13 @@ function BoardInner() {
         <EditableDesc k={board.id === MAIN_BOARD_ID ? 'board-desc' : `board-desc-${board.id}`} def={board.desc} />
       </div>
 
+      {/* 로드비 게시판(load-b)일 때 상단에 BTool 레트로 그림판 즉시 배치 */}
+      {board.id === 'load-b' && (
+        <div className="panel" style={{ padding: '16px', marginBottom: '20px' }}>
+          <DrawingBoard boardId="load-b" onPostSuccess={handlePostSuccess} />
+        </div>
+      )}
+
       <div className="toolrow">
         <div className="seg">
           {['전체', '공지', ...board.cats.map(x => x.label)].map(c => (
@@ -108,24 +103,11 @@ function BoardInner() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <SearchBar onSearch={v => { setQ(v); setPage(1); }} />
-          <button
-            className="btn"
-            style={{ backgroundColor: showCanvas ? '#800000' : '#008080', color: '#fff', fontWeight: 'bold' }}
-            onClick={() => setShowCanvas(!showCanvas)}
-          >
-            {showCanvas ? '❌ 그림판 닫기' : '🎨 그림 그리기'}
-          </button>
           {allow(board.permWrite) && !!user && (
             <button className="btn btn-dark" onClick={() => router.push(`/board/write?b=${board.id}`)}>✎ WRITE</button>
           )}
         </div>
       </div>
-
-      {showCanvas && (
-        <div className="panel" style={{ padding: '20px', marginBottom: '20px', display: 'flex', justifyContent: 'center' }}>
-          <DrawingBoard onPostSuccess={handlePostSuccess} />
-        </div>
-      )}
 
       {board.skin === 'ticket' ? (
         <div style={board.fg ? { color: board.fg } : undefined}>
