@@ -1,5 +1,5 @@
 'use client';
-// 그림게시판 로드뷰 (4.10) — 비툴 그림판 강제 노출 버전
+// 그림게시판 로드뷰 (4.12) — 업로드 옆 그림판 토글 버튼 및 프로 웹 그림판 포함 버전
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import {
@@ -22,13 +22,13 @@ const PAGE_SIZE = 4;
 const FOLD_LABEL = { spoiler: '스포일러', adult: '수위 주의' };
 
 // ==========================================
-// 🎨 레트로 비툴 그림판 컴포넌트
+// 🎨 웹 프로 그림판 컴포넌트
 // ==========================================
-function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, title: string) => void }) {
+function RetroDrawingBoard({ onDrawUpload, onClose }: { onDrawUpload: (base64: string, title: string) => void; onClose: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [penSize, setPenSize] = useState(2);
-  const [eraserSize, setEraserSize] = useState(10);
-  const [activeTool, setActiveTool] = useState<'pen' | 'eraser'>('pen');
+  
+  const [activeTool, setActiveTool] = useState<'pen' | 'crayon' | 'airbrush' | 'eraser' | 'select'>('pen');
+  const [brushSize, setBrushSize] = useState(3);
   const [rgb, setRgb] = useState({ r: 0, g: 0, b: 0 });
   const [title, setTitle] = useState('');
   const [isPosting, setIsPosting] = useState(false);
@@ -36,8 +36,30 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
   const [prevPos, setPrevPos] = useState({ x: 0, y: 0 });
   const [seconds, setSeconds] = useState(0);
 
+  const [activeLayer, setActiveLayer] = useState<1 | 2>(1);
+  const [layer1Opacity, setLayer1Opacity] = useState(1);
+  const [layer2Opacity, setLayer2Opacity] = useState(1);
+  
+  const layer1CanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const layer2CanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   useEffect(() => {
     const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
+    layer1CanvasRef.current = document.createElement('canvas');
+    layer1CanvasRef.current.width = 420;
+    layer1CanvasRef.current.height = 420;
+
+    layer2CanvasRef.current = document.createElement('canvas');
+    layer2CanvasRef.current.width = 420;
+    layer2CanvasRef.current.height = 420;
+
+    const ctx1 = layer1CanvasRef.current.getContext('2d');
+    if (ctx1) {
+      ctx1.fillStyle = '#ffffff';
+      ctx1.fillRect(0, 0, 420, 420);
+    }
+
+    redrawMainCanvas();
     return () => clearInterval(timer);
   }, []);
 
@@ -60,7 +82,34 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
     setRgb({ r, g, b });
-    setActiveTool('pen');
+  };
+
+  const redrawMainCanvas = () => {
+    const mainCanvas = canvasRef.current;
+    if (!mainCanvas) return;
+    const ctx = mainCanvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, mainCanvas.width, mainCanvas.height);
+
+    if (layer1CanvasRef.current) {
+      ctx.save();
+      ctx.globalAlpha = layer1Opacity;
+      ctx.drawImage(layer1CanvasRef.current, 0, 0);
+      ctx.restore();
+    }
+    if (layer2CanvasRef.current) {
+      ctx.save();
+      ctx.globalAlpha = layer2Opacity;
+      ctx.drawImage(layer2CanvasRef.current, 0, 0);
+      ctx.restore();
+    }
+  };
+
+  const getTargetLayerCtx = () => {
+    const targetRef = activeLayer === 1 ? layer1CanvasRef : layer2CanvasRef;
+    if (!targetRef.current) return null;
+    return targetRef.current.getContext('2d');
   };
 
   const getPos = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -75,63 +124,94 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
     };
   };
 
-  const drawLine = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+  const drawOnLayer = (p1: { x: number; y: number }, p2: { x: number; y: number }) => {
+    const ctx = getTargetLayerCtx();
     if (!ctx) return;
 
     ctx.save();
     if (activeTool === 'eraser') {
       ctx.globalCompositeOperation = 'destination-out';
-      ctx.lineWidth = eraserSize;
+      ctx.lineWidth = brushSize * 3;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(p1.x, p1.y);
       ctx.lineTo(p2.x, p2.y);
       ctx.stroke();
-    } else {
+    } else if (activeTool === 'pen') {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = currentColorHex;
+      ctx.lineWidth = brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    } else if (activeTool === 'crayon') {
+      ctx.globalCompositeOperation = 'source-over';
       ctx.fillStyle = currentColorHex;
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-      for (let i = 0; i < dist; i += 1) {
-        const x = p1.x + Math.cos(angle) * i;
-        const y = p1.y + Math.sin(angle) * i;
-        ctx.fillRect(Math.floor(x), Math.floor(y), penSize, penSize);
+      for (let i = 0; i < dist; i += 2) {
+        const x = p1.x + Math.cos(angle) * i + (Math.random() - 0.5) * brushSize * 1.5;
+        const y = p1.y + Math.sin(angle) * i + (Math.random() - 0.5) * brushSize * 1.5;
+        ctx.fillRect(Math.floor(x), Math.floor(y), Math.max(1, brushSize * 0.8), Math.max(1, brushSize * 0.8));
+      }
+    } else if (activeTool === 'airbrush') {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = currentColorHex;
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      for (let i = 0; i < dist; i += 4) {
+        const cx = p1.x + Math.cos(angle) * i;
+        const cy = p1.y + Math.sin(angle) * i;
+        for (let j = 0; j < 5; j++) {
+          const rx = cx + (Math.random() - 0.5) * brushSize * 4;
+          const ry = cy + (Math.random() - 0.5) * brushSize * 4;
+          ctx.fillRect(Math.floor(rx), Math.floor(ry), 1, 1);
+        }
       }
     }
     ctx.restore();
+    redrawMainCanvas();
   };
 
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (activeTool === 'select') return;
     setIsDrawing(true);
-    setPrevPos(getPos(e));
+    const pos = getPos(e);
+    setPrevPos(pos);
+    drawOnLayer(pos, pos);
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
+    if (!isDrawing || activeTool === 'select') return;
     const currentPos = getPos(e);
-    drawLine(prevPos, currentPos);
+    drawOnLayer(prevPos, currentPos);
     setPrevPos(currentPos);
   };
 
   const stopDrawing = () => setIsDrawing(false);
 
-  const handleClear = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const handleClearLayer = () => {
+    const ctx = getTargetLayerCtx();
+    if (!ctx) return;
+    ctx.clearRect(0, 0, 420, 420);
+    if (activeLayer === 1) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 420, 420);
+    }
+    redrawMainCanvas();
   };
 
   const handleFillCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = currentColorHex;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
+    const ctx = getTargetLayerCtx();
+    if (!ctx) return;
+    ctx.save();
+    ctx.fillStyle = currentColorHex;
+    ctx.fillRect(0, 0, 420, 420);
+    ctx.restore();
+    redrawMainCanvas();
   };
 
   const handleUploadClick = async () => {
@@ -141,7 +221,8 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
       const imageBase64 = canvasRef.current.toDataURL('image/png');
       onDrawUpload(imageBase64, title.trim());
       setTitle('');
-      handleClear();
+      handleClearLayer();
+      onClose(); // 업로드 후 그림판 자동 닫기
     } finally {
       setIsPosting(false);
     }
@@ -158,41 +239,64 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
     userSelect: 'none',
   };
 
-  const retroBtnStyle: React.CSSProperties = {
-    backgroundColor: '#b8bcb8',
-    borderTop: '1.5px solid #ffffff',
-    borderLeft: '1.5px solid #ffffff',
-    borderRight: '1.5px solid #404040',
-    borderBottom: '1.5px solid #404040',
+  const retroBtnStyle = (active: boolean): React.CSSProperties => ({
+    backgroundColor: active ? '#989c98' : '#b8bcb8',
+    borderTop: active ? '1.5px solid #404040' : '1.5px solid #ffffff',
+    borderLeft: active ? '1.5px solid #404040' : '1.5px solid #ffffff',
+    borderRight: active ? '1.5px solid #ffffff' : '1.5px solid #404040',
+    borderBottom: active ? '1.5px solid #ffffff' : '1.5px solid #404040',
     cursor: 'pointer',
     fontSize: '11px',
     fontWeight: 'bold',
     textAlign: 'center',
-  };
+    padding: '3px 8px',
+  });
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center', width: '100%', marginBottom: '24px' }}>
-      <div style={{ ...retroBoxStyle, padding: '8px', width: '580px', maxWidth: '100%' }}>
+      <div style={{ ...retroBoxStyle, padding: '8px', width: '610px', maxWidth: '100%', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <button onClick={handleUploadClick} disabled={isPosting} style={{ ...retroBtnStyle, padding: '4px 12px' }}>
-              {isPosting ? '올리는 중...' : '올리기'}
+            <button onClick={handleUploadClick} disabled={isPosting} style={retroBtnStyle(false)}>
+              {isPosting ? '올리는 중...' : '🖼️ 완성작 등록'}
             </button>
             <input
               type="text"
-              placeholder="그림 제목 (선택)..."
+              placeholder="그림 제목 입력..."
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              style={{ padding: '2px 6px', fontSize: '11px', width: '130px', border: '1px solid #808080', background: '#fff', color: '#000' }}
+              style={{ padding: '3px 6px', fontSize: '11px', width: '150px', border: '1px solid #808080', background: '#fff', color: '#000' }}
             />
           </div>
-          <div style={{ fontSize: '10px', backgroundColor: '#a8aca8', padding: '2px 6px', border: '1px solid #808080' }}>
-            비툴 드로잉룸
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <div style={{ fontSize: '10px', backgroundColor: '#a8aca8', padding: '2px 6px', border: '1px solid #808080' }}>
+              웹 프로 비툴룸 v2.0
+            </div>
+            <button onClick={onClose} style={{ ...retroBtnStyle(false), color: '#a00', fontWeight: 'bold' }}>✕ 닫기</button>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <div style={{ border: '1px solid #000', backgroundColor: '#ffffff', width: '420px', height: '420px', maxWidth: '100%', cursor: 'crosshair', flex: 1 }}>
+          <div style={{ width: '85px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div style={{ ...retroBoxStyle, padding: '4px', display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              <span style={{ fontWeight: 'bold', textAlign: 'center', borderBottom: '1px solid #999', paddingBottom: '2px' }}>브러쉬</span>
+              <button onClick={() => setActiveTool('pen')} style={retroBtnStyle(activeTool === 'pen')}>펜</button>
+              <button onClick={() => setActiveTool('crayon')} style={retroBtnStyle(activeTool === 'crayon')}>크레용</button>
+              <button onClick={() => setActiveTool('airbrush')} style={retroBtnStyle(activeTool === 'airbrush')}>에어브러시</button>
+              <button onClick={() => setActiveTool('eraser')} style={retroBtnStyle(activeTool === 'eraser')}>지우개</button>
+              <button onClick={() => setActiveTool('select')} style={retroBtnStyle(activeTool === 'select')}>선택툴</button>
+            </div>
+
+            <div style={{ ...retroBoxStyle, padding: '4px', textAlign: 'center' }}>
+              <div style={{ fontSize: '10px', marginBottom: '2px' }}>크기: {brushSize}px</div>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '2px' }}>
+                <button onClick={() => setBrushSize(Math.max(1, brushSize - 1))} style={retroBtnStyle(false)}>-</button>
+                <button onClick={() => setBrushSize(Math.min(30, brushSize + 1))} style={retroBtnStyle(false)}>+</button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ border: '2px inset #fff', backgroundColor: '#ffffff', width: '420px', height: '420px', maxWidth: '100%', cursor: activeTool === 'select' ? 'default' : 'crosshair', flex: 1, position: 'relative' }}>
             <canvas
               ref={canvasRef}
               width={420}
@@ -206,67 +310,71 @@ function RetroDrawingBoard({ onDrawUpload }: { onDrawUpload: (base64: string, ti
               onTouchEnd={stopDrawing}
               style={{ width: '100%', height: '100%', display: 'block', touchAction: 'none' }}
             />
+            {activeTool === 'select' && (
+              <div style={{ position: 'absolute', top: 5, left: 5, background: 'rgba(0,0,0,0.6)', color: '#fff', padding: '2px 6px', fontSize: '9px', pointerEvents: 'none' }}>
+                [선택 모드 활성화됨]
+              </div>
+            )}
           </div>
 
-          <div style={{ width: '120px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div style={{ ...retroBoxStyle, padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>펜</span>
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button onClick={() => { setPenSize(Math.min(20, penSize + 1)); setActiveTool('pen'); }} style={{ ...retroBtnStyle, width: '14px' }}>▲</button>
-                <button onClick={() => { setPenSize(Math.max(1, penSize - 1)); setActiveTool('pen'); }} style={{ ...retroBtnStyle, width: '14px' }}>▼</button>
-              </div>
-              <span>{penSize}px</span>
-            </div>
-
-            <div style={{ ...retroBoxStyle, padding: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>지우개</span>
-              <div style={{ display: 'flex', gap: '2px' }}>
-                <button onClick={() => { setEraserSize(Math.min(40, eraserSize + 2)); setActiveTool('eraser'); }} style={{ ...retroBtnStyle, width: '14px' }}>▲</button>
-                <button onClick={() => { setEraserSize(Math.max(2, eraserSize - 2)); setActiveTool('eraser'); }} style={{ ...retroBtnStyle, width: '14px' }}>▼</button>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '2px' }}>
-              <button onClick={handleFillCanvas} style={{ ...retroBtnStyle, flex: 1, padding: '2px' }}>채우기</button>
-            </div>
-
+          <div style={{ width: '115px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <div style={{ ...retroBoxStyle, padding: '4px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2px', marginBottom: '6px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '2px', marginBottom: '4px' }}>
                 {paletteColors.map((hex, i) => (
                   <div
                     key={i}
                     onClick={() => handlePaletteClick(hex)}
-                    style={{ width: '18px', height: '14px', backgroundColor: hex, border: '1px solid #000', cursor: 'pointer' }}
+                    style={{ width: '20px', height: '16px', backgroundColor: hex, border: '1px solid #000', cursor: 'pointer' }}
                   />
                 ))}
               </div>
-              <div style={{ width: '100%', height: '16px', backgroundColor: currentColorHex, border: '1px solid #000', marginBottom: '6px' }} />
+              <div style={{ width: '100%', height: '16px', backgroundColor: currentColorHex, border: '1px solid #000', marginBottom: '4px' }} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '10px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                   <span style={{ color: 'red', fontWeight: 'bold' }}>R</span>
-                  <input type="range" min="0" max="255" value={rgb.r} onChange={(e) => setRgb({ ...rgb, r: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                  <input type="range" min="0" max="255" value={rgb.r} onChange={(e) => setRgb({ ...rgb, r: Number(e.target.value) })} style={{ flex: 1, height: '6px' }} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                   <span style={{ color: 'green', fontWeight: 'bold' }}>G</span>
-                  <input type="range" min="0" max="255" value={rgb.g} onChange={(e) => setRgb({ ...rgb, g: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                  <input type="range" min="0" max="255" value={rgb.g} onChange={(e) => setRgb({ ...rgb, g: Number(e.target.value) })} style={{ flex: 1, height: '6px' }} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                   <span style={{ color: 'blue', fontWeight: 'bold' }}>B</span>
-                  <input type="range" min="0" max="255" value={rgb.b} onChange={(e) => setRgb({ ...rgb, b: Number(e.target.value) })} style={{ flex: 1, height: '8px' }} />
+                  <input type="range" min="0" max="255" value={rgb.b} onChange={(e) => setRgb({ ...rgb, b: Number(e.target.value) })} style={{ flex: 1, height: '6px' }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ ...retroBoxStyle, padding: '4px', fontSize: '10px' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '3px', borderBottom: '1px solid #999', display: 'flex', justifyContent: 'space-between' }}>
+                <span>레이어 관리</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                <div onClick={() => setActiveLayer(2)} style={{ padding: '2px 4px', background: activeLayer === 2 ? '#8090b0' : '#e0e0e0', color: activeLayer === 2 ? '#fff' : '#000', cursor: 'pointer', border: '1px solid #888', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Layer 2</span>
+                  <span>{Math.round(layer2Opacity * 100)}%</span>
+                </div>
+                <div onClick={() => setActiveLayer(1)} style={{ padding: '2px 4px', background: activeLayer === 1 ? '#8090b0' : '#e0e0e0', color: activeLayer === 1 ? '#fff' : '#000', cursor: 'pointer', border: '1px solid #888', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Layer 1 (배경)</span>
+                  <span>{Math.round(layer1Opacity * 100)}%</span>
                 </div>
               </div>
             </div>
 
             <div style={{ ...retroBoxStyle, padding: '4px', textAlign: 'center' }}>
-              <div>작업 시간</div>
-              <div style={{ marginTop: '2px', fontWeight: 'bold' }}>{formatTimer(seconds)}</div>
+              <button onClick={handleFillCanvas} style={{ ...retroBtnStyle(false), width: '100%', marginBottom: '4px' }}>배경 채우기</button>
+              <div style={{ fontSize: '9px' }}>작업 시간</div>
+              <div style={{ fontSize: '11px', fontWeight: 'bold' }}>{formatTimer(seconds)}</div>
             </div>
+
           </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-          <button onClick={handleClear} style={{ ...retroBtnStyle, padding: '4px 12px' }}>클리어</button>
-          <div style={{ ...retroBoxStyle, padding: '2px 6px', fontSize: '10px' }}>Retro Drawing Tool</div>
+          <button onClick={handleClearLayer} style={retroBtnStyle(false)}>현재 레이어 비우기</button>
+          <div style={{ ...retroBoxStyle, padding: '2px 6px', fontSize: '10px' }}>
+            활성 레이어: <b>Layer {activeLayer}</b> 선택됨 😈
+          </div>
         </div>
       </div>
     </div>
@@ -434,6 +542,9 @@ export default function RoadviewPage() {
   const [q, setQ] = useState('');
   const [shown, setShown] = useState(PAGE_SIZE);
 
+  // 그림판 열기/닫기 상태 토글
+  const [isDrawingOpen, setIsDrawingOpen] = useState(false);
+
   useEffect(() => {
     if (!roadLoaded) return;
     if (items.some(it => it.no === undefined)) {
@@ -531,21 +642,36 @@ export default function RoadviewPage() {
       <div className="page-head">
         <PageTitle>LOAD-B</PageTitle>
         <EditableDesc k="roadview-desc" def="그림이 좋아서 모았습니다" />
-        <div className="head-actions">
+        <div className="head-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {allow(menuSet.roadUpload) && !!user && (
             <>
+              {/* 기존 일반 업로드 버튼 */}
               <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
                 onChange={e => { upload(e.target.files?.[0]); e.target.value = ''; }} />
               <button className="btn btn-dark" onClick={() => fileRef.current?.click()}
                 {...fileDrop(fl => upload(fl[0]))}>↑ UPLOAD</button>
+
+              {/* 업로드 옆에 나란히 들어간 그림판 토글 버튼 */}
+              <button 
+                className="btn btn-ghost" 
+                style={{ background: isDrawingOpen ? 'var(--accent)' : 'rgba(255,255,255,.9)', color: isDrawingOpen ? '#fff' : 'inherit' }}
+                onClick={() => setIsDrawingOpen(!isDrawingOpen)}
+              >
+                {isDrawingOpen ? '🎨 그림판 닫기' : '🎨 그림판 열기'}
+              </button>
             </>
           )}
           <SearchBar onSearch={setQ} />
         </div>
       </div>
 
-      {/* 🔥 조건 없이 무조건 최상단에 그림판 강제 노출 */}
-      <RetroDrawingBoard onDrawUpload={handleDrawUpload} />
+      {/* 🎨 버튼을 누를 때만 토글되어 나타나는 웹 프로 그림판 */}
+      {isDrawingOpen && (
+        <RetroDrawingBoard 
+          onDrawUpload={handleDrawUpload} 
+          onClose={() => setIsDrawingOpen(false)} 
+        />
+      )}
 
       {visible.slice(0, shown).map(it => (
         <RoadBlock key={it.id} item={it} comments={commentsFor(cmtRows, 'road', it.id, it.comments)} onComment={addComment}
