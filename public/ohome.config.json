@@ -1,5 +1,9 @@
 {
-  "siteName": "O.home",
-  "ownerUid": "Scf86SY1sQfIAgrM13HWYwoWRx43",
-  "theme": "light"
+  "kind": "firebase",
+  "apiKey": "AIzaSyBPoLQaB_k_GwSR5fqp2zpyQuvxFb0V8w4",
+  "authDomain": "kiki-3bb57.firebaseapp.com",
+  "projectId": "kiki-3bb57",
+  "storageBucket": "kiki-3bb57.firebasestorage.app",
+  "appId": "1:1031294441838:web:8c4689f7fd5c822e5b897f",
+  "messagingSenderId": "1031294441838"
 }
